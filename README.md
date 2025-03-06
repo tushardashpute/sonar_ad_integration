@@ -35,7 +35,24 @@ This guide provides step-by-step instructions to deploy SonarQube with SSL encry
 4. Click **Add permissions**.
 5. Click **Grant admin consent** for your organization.
 
-## 2. Generate SSL Certificate using Let's Encrypt
+## 2. Create Directories for SSL and SonarQube
+```sh
+mkdir -p ~/sonarqube/{conf,data,logs,extensions,certs}
+```
+Place your SSL certificate (`cert.pem`) and private key (`privkey.pem`) inside `~/sonarqube/certs/`.
+
+Also, copy your Nginx configuration file:
+```sh
+cp nginx.conf ~/sonarqube/nginx.conf
+```
+
+## 3. Download and Install Azure AD Plugin
+```sh
+mkdir -p ~/sonarqube/extensions/plugins
+curl -L -o ~/sonarqube/extensions/plugins/sonar-auth-aad-plugin.jar https://github.com/hkamel/sonar-auth-aad/releases/download/1.3.1/sonar-auth-aad-plugin-1.3.1.jar
+```
+
+## 4. Generate SSL Certificate using Let's Encrypt
 
 We will use [Certbot](https://certbot.eff.org/) to obtain an SSL certificate.
 
@@ -51,7 +68,13 @@ sudo certbot certonly --standalone -d sonar.example.com
 ```
 This will generate SSL certificates at `/etc/letsencrypt/live/sonar.example.com/`.
 
-## 3. Configure SonarQube with Docker and Nginx Reverse Proxy
+Copy the certificates to the specified path:
+```sh
+cp /etc/letsencrypt/live/sonar.example.com/fullchain.pem ~/sonarqube/certs/
+cp /etc/letsencrypt/live/sonar.example.com/privkey.pem ~/sonarqube/certs/
+```
+
+## 5. Run SonarQube with Nginx as a Reverse Proxy
 
 ### Create `docker-compose.yml`
 ```yaml
@@ -86,7 +109,7 @@ services:
     ports:
       - "443:443"
     volumes:
-      - /etc/letsencrypt/live/sonar.example.com:/etc/nginx/certs:ro
+      - ~/sonarqube/certs:/etc/nginx/certs:ro
       - ~/sonarqube/nginx.conf:/etc/nginx/nginx.conf:ro
     depends_on:
       - sonarqube
@@ -127,13 +150,13 @@ http {
 }
 ```
 
-## 4. Deploy and Start Services
+## 6. Deploy and Start Services
 
 ```sh
 docker-compose up -d
 ```
 
-## 5. Renew SSL Certificate (Automate with Cron Job)
+## 7. Renew SSL Certificate (Automate with Cron Job)
 
 ```sh
 sudo certbot renew --quiet
