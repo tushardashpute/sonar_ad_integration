@@ -1,0 +1,39 @@
+version: '3'
+services:
+  sonarqube:
+    image: sonarqube:developer
+    container_name: sonarqube
+    restart: unless-stopped
+    environment:
+      - sonar.web.context=/
+      - SONAR_ES_BOOTSTRAP_CHECKS_DISABLE=true
+      - sonar.core.serverBaseURL=https://sonar.astute001.com
+      - sonar.auth.aad.enabled=true
+      - sonar.auth.aad.clientId=xxxxxxxxxxxx
+      - sonar.auth.aad.clientSecret=xxxxxxxxxxx
+      - sonar.auth.aad.tenantId=xxxxxxxxxxxxxx
+      - sonar.auth.aad.loginStrategy=Unique
+      - sonar.auth.aad.allowUsersToSignUp=true
+    volumes:
+      - ~/sonarqube/conf:/opt/sonarqube/conf
+      - ~/sonarqube/data:/opt/sonarqube/data
+      - ~/sonarqube/logs:/opt/sonarqube/logs
+      - ~/sonarqube/extensions:/opt/sonarqube/extensions
+    networks:
+      - sonarnet
+
+  nginx:
+    image: nginx:latest
+    container_name: sonarqube-nginx
+    restart: unless-stopped
+    ports:
+      - "443:443"
+    volumes:
+      - ~/sonarqube/certs:/etc/nginx/certs
+      - ~/sonarqube/nginx.conf:/etc/nginx/nginx.conf:ro
+    depends_on:
+      - sonarqube
+    networks:
+      - sonarnet
+networks:
+  sonarnet:
