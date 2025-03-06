@@ -1,88 +1,169 @@
-Integrating **SonarQube** with **Azure Active Directory (Azure AD)** allows users to log in using their Azure AD credentials. Here’s how you can set it up:
+# SonarQube with SSL and Azure AD Integration using Let's Encrypt
 
----
+This guide provides step-by-step instructions to deploy SonarQube with SSL encryption using Let's Encrypt and integrate it with Azure Active Directory (AAD) for authentication.
 
-1. Craete a user in azure
+## Prerequisites
+- A server (VM or container host) with a public DNS entry (e.g., `sonar.example.com`).
+- Docker and Docker Compose installed.
+- A valid Azure AD tenant and app registration.
+- A registered domain with DNS settings configured for Let's Encrypt.
 
-![image](https://github.com/user-attachments/assets/b4030912-fd77-4280-b9a9-a8dfa289c2d2)
+## 1. Configure Azure AD Authentication
 
-
-### **🔹 Prerequisites**
-1. **SonarQube**: Ensure SonarQube is up and running (preferably Enterprise Edition or higher for SAML support).  
-2. **Azure AD Admin Access**: You need access to the **Azure AD portal** to create an app registration.  
-3. **SonarQube Admin Access**: You need admin rights in SonarQube to configure authentication.  
-
----
-
-### **🔹 Step-by-Step Integration Guide**
-
-#### **1️⃣ Register SonarQube in Azure AD**
-1. **Go to Azure Portal** → **Azure Active Directory** → **App Registrations** → **New Registration**  
-2. Enter:
+### Register an Application in Azure AD
+1. Go to [Azure AD App Registrations](https://portal.azure.com/)
+2. Click **New registration** and set:
    - **Name**: `SonarQube`
-   - **Supported account types**: Choose as per your org’s need
-   - **Redirect URI**:  
-     ```
-     https://your-sonarqube-url/oauth2/callback/saml
-     ```
-3. Click **Register** and note the **Application (Client) ID**.  
+   - **Supported account types**: Choose "Accounts in this organizational directory only"
+   - **Redirect URI**: Select "Web" and enter `https://sonar.example.com/oauth2/callback/aad`
+3. Click **Register**.
+4. Copy **Application (client) ID** and **Directory (tenant) ID**.
 
+### Configure Client Secret
+1. In the **Azure AD App Registration**, navigate to **Certificates & secrets**.
+2. Under **Client secrets**, click **New client secret**.
+3. Set a description and expiration period, then click **Add**.
+4. Copy the generated secret and store it securely.
 
+### Set API Permissions
+1. Navigate to **API Permissions**.
+2. Click **Add a permission** → **Microsoft Graph**.
+3. Choose **Delegated permissions** and select:
+   - `openid`
+   - `email`
+   - `profile`
+4. Click **Add permissions**.
+5. Click **Grant admin consent** for your organization.
 
+## 2. Generate SSL Certificate using Let's Encrypt
 
----
+We will use [Certbot](https://certbot.eff.org/) to obtain an SSL certificate.
 
-#### **2️⃣ Configure Authentication in Azure AD**
-1. Go to **Authentication** → Click **Add a platform** → Select **Web**.  
-2. Set the Redirect URI:
-   ```
-   https://your-sonarqube-url/oauth2/callback/saml
-   ```
-3. Enable **ID tokens** and **Save**.  
+### Install Certbot
+```sh
+sudo apt update
+sudo apt install certbot
+```
 
----
+### Obtain SSL Certificate
+```sh
+sudo certbot certonly --standalone -d sonar.example.com
+```
+This will generate SSL certificates at `/etc/letsencrypt/live/sonar.example.com/`.
 
-#### **3️⃣ Configure SAML Attributes in Azure AD**
-1. **Go to "Enterprise Applications"** → Find **SonarQube** → Click **Single sign-on**  
-2. Choose **SAML** → **Basic SAML Configuration**  
-3. Configure:
-   - **Identifier (Entity ID)**: `https://your-sonarqube-url`
-   - **Reply URL** (ACS URL): `https://your-sonarqube-url/oauth2/callback/saml`
-   - **Logout URL**: `https://your-sonarqube-url`
-4. **Attributes & Claims**:
-   - `user.mail` → `NameID`
-   - `user.principalname` → `username`
-   - `user.givenname` → `firstName`
-   - `user.surname` → `lastName`
-5. Download the **Federation Metadata XML** (will be used in SonarQube).  
+## 3. Configure SonarQube with Docker and Nginx Reverse Proxy
 
----
+### Create `docker-compose.yml`
+```yaml
+version: '3'
+services:
+  sonarqube:
+    image: sonarqube:developer
+    container_name: sonarqube
+    restart: unless-stopped
+    environment:
+      - sonar.web.context=/
+      - SONAR_ES_BOOTSTRAP_CHECKS_DISABLE=true
+      - sonar.core.serverBaseURL=https://sonar.example.com
+      - sonar.auth.aad.enabled=true
+      - sonar.auth.aad.clientId=<your-client-id>
+      - sonar.auth.aad.clientSecret=<your-client-secret>
+      - sonar.auth.aad.tenantId=<your-tenant-id>
+      - sonar.auth.aad.loginStrategy=Unique
+      - sonar.auth.aad.allowUsersToSignUp=true
+    volumes:
+      - ~/sonarqube/conf:/opt/sonarqube/conf
+      - ~/sonarqube/data:/opt/sonarqube/data
+      - ~/sonarqube/logs:/opt/sonarqube/logs
+      - ~/sonarqube/extensions:/opt/sonarqube/extensions
+    networks:
+      - sonarnet
 
-#### **4️⃣ Configure SonarQube for SAML**
-1. **Log in to SonarQube** as an admin  
-2. Go to **Administration** → **Security** → **SAML**  
-3. Set:  
-   - **Provider Name**: `Azure AD`
-   - **SAML Login URL**: *(From Azure AD SSO page)*
-   - **SAML Logout URL**: *(From Azure AD SSO page)*
-   - **X.509 Certificate**: *(Copy from Azure AD metadata XML)*
-   - **Application ID**: *(Client ID from Azure AD)*
-   - **Keycloak compatibility mode**: ✅ Enabled  
-4. **Save & Enable** SAML authentication.  
+  nginx:
+    image: nginx:latest
+    container_name: sonarqube-nginx
+    restart: unless-stopped
+    ports:
+      - "443:443"
+    volumes:
+      - /etc/letsencrypt/live/sonar.example.com:/etc/nginx/certs:ro
+      - ~/sonarqube/nginx.conf:/etc/nginx/nginx.conf:ro
+    depends_on:
+      - sonarqube
+    networks:
+      - sonarnet
 
----
+networks:
+  sonarnet:
+```
 
-### **🔹 Testing & Troubleshooting**
-1. **Logout** and try **Sign in with Azure AD** in SonarQube.  
-2. If login fails, check:
-   - SonarQube logs (`sonar.log`)
-   - Azure AD **Enterprise Application logs**
-   - Ensure **Claims Mapping** is correctly configured  
+### Create `nginx.conf`
+```nginx
+ events {
+    worker_connections 1024;
+}
 
----
+http {
+    upstream sonarqube {
+        server sonarqube:9000;
+    }
 
-Would you like automation using Terraform or Helm for this setup? 🚀
+    server {
+        listen 443 ssl;
+        server_name sonar.example.com;
 
-3. 
+        ssl_certificate /etc/nginx/certs/fullchain.pem;
+        ssl_certificate_key /etc/nginx/certs/privkey.pem;
 
+        location / {
+            proxy_pass http://sonarqube;
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto https;
+            proxy_redirect http:// https://;
+        }
+    }
+}
+```
+
+## 4. Deploy and Start Services
+
+```sh
+docker-compose up -d
+```
+
+## 5. Renew SSL Certificate (Automate with Cron Job)
+
+```sh
+sudo certbot renew --quiet
+```
+To automate, add a cron job:
+```sh
+sudo crontab -e
+```
+Add this line:
+```sh
+0 3 * * * certbot renew --quiet && docker restart sonarqube-nginx
+```
+
+## Troubleshooting
+
+### Check SonarQube Logs
+```sh
+docker logs -f sonarqube
+```
+
+### Check Nginx Logs
+```sh
+docker logs -f sonarqube-nginx
+```
+
+### Verify SSL Configuration
+```sh
+openssl s_client -connect sonar.example.com:443
+```
+
+## Conclusion
+You have successfully set up SonarQube with SSL using Let's Encrypt and integrated Azure AD authentication. 🎉
 
